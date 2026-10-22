@@ -1108,6 +1108,7 @@ mod idle_tests {
             mentions: Vec::new(),
             forwarded: false,
             thumbnail: None,
+            transcript: None,
         });
         conversation.complete = true;
         app.conversations.insert(chat.id.clone(), conversation);
@@ -1167,6 +1168,7 @@ mod idle_tests {
                 mentions: Vec::new(),
                 forwarded: false,
                 thumbnail: None,
+                transcript: None,
             });
         }
         conversation.complete = true;
@@ -1597,6 +1599,7 @@ mod idle_tests {
                 mentions: Vec::new(),
                 forwarded: false,
                 thumbnail: None,
+                transcript: None,
                 history_order: None,
             });
         }
