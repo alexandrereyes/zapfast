@@ -598,6 +598,10 @@ pub struct App {
     voices_wanted: Option<(ChatId, Vec<String>)>,
     /// The list last sent to the backend.
     voices_sent: Option<(ChatId, Vec<String>)>,
+    /// The list must be sent again even if it did not change, because a file
+    /// it left out has just arrived. Kept apart from `voices_sent`: that one
+    /// is what the backend still has queued, and cancellation needs it.
+    voices_resend: bool,
     /// When `voices_wanted` last changed, for the debounce.
     voices_changed: Instant,
     /// Previous message-list rect used by the selection hook.
@@ -1408,6 +1412,7 @@ impl App {
             voices_on_screen: Default::default(),
             voices_wanted: None,
             voices_sent: None,
+            voices_resend: false,
             voices_changed: Instant::now(),
             selection_view: Default::default(),
             gif_query: String::new(),
@@ -1851,6 +1856,9 @@ impl App {
         self.window_focused = false;
         self.hide_intent = false;
         self.wants_show = false;
+        // Nothing is on screen any more, so the list the backend queued from
+        // must not keep transcribing behind the tray.
+        self.cancel_transcriptions();
         // The window is gone with the full screen it was in; a new one starts
         // at its normal size.
         self.call_fullscreen = false;
@@ -5037,6 +5045,8 @@ impl App {
         // A voice message that only now has its file can be transcribed: ask
         // again for the list on screen, which now includes it.
         if card.is_none()
+            && !self.events_hidden
+            && self.open_chat.as_deref() == Some(chat)
             && self
                 .conversations
                 .get(chat)
@@ -5051,7 +5061,7 @@ impl App {
                     )
                 })
         {
-            self.voices_sent = None;
+            self.voices_resend = true;
         }
     }
 
@@ -9448,6 +9458,7 @@ impl App {
             });
         }
         self.voices_wanted = None;
+        self.voices_resend = false;
         *self
             .voices_on_screen
             .lock()
@@ -9499,7 +9510,7 @@ impl App {
             self.voices_wanted = wanted;
             self.voices_changed = Instant::now();
         }
-        if self.voices_wanted == self.voices_sent {
+        if self.voices_wanted == self.voices_sent && !self.voices_resend {
             return;
         }
         let hold = Duration::from_millis(300);
@@ -9517,6 +9528,7 @@ impl App {
             locale: self.locale.tag().to_owned(),
         });
         self.voices_sent = self.voices_wanted.clone();
+        self.voices_resend = false;
     }
 
     /// Inserts text at the composer cursor or end.
