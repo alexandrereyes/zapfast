@@ -1812,6 +1812,9 @@ impl App {
         // The newest message the keys followed goes with it.
         self.message_cursor.clear();
         self.cursor_followed = None;
+        // The previous account's backend keeps its queue otherwise, and this
+        // window would send its empty request to the next account instead.
+        self.cancel_transcriptions();
     }
 
     fn add_account(&mut self) {
@@ -9490,21 +9493,10 @@ impl App {
             .lock()
             .unwrap_or_else(|p| p.into_inner())
             .clear();
-        // Voice messages left behind stop queueing: the next account asks for
-        // its own. The one in flight may finish, and its text waits in that
-        // account's archive.
-        if let Some((chat, _)) = self.voices_sent.take() {
-            self.backend.send(Command::Transcribe {
-                chat,
-                ids: Vec::new(),
-                locale: self.locale.tag().to_owned(),
-            });
-        }
-        self.voices_wanted = None;
-        *self
-            .voices_on_screen
-            .lock()
-            .unwrap_or_else(|p| p.into_inner()) = None;
+        self.cancel_transcriptions();
+        // The lock screen is meant to forget the private tree, markers
+        // included; the queue cancellation above leaves that account's text in
+        // its archive.
         self.transcribing.clear();
     }
 
@@ -10160,19 +10152,27 @@ impl App {
     /// Asks the backend to transcribe the voice messages on screen, once the
     /// reader has stopped moving through them for a moment. A quick scroll
     /// through a long chat therefore transcribes nothing it only passed by.
+    /// Drops the transcription queue of the account on screen and forgets the
+    /// voice list this window asked for. The clip already being transcribed
+    /// may still finish; its text waits in that account's archive.
+    fn cancel_transcriptions(&mut self) {
+        if let Some((chat, _)) = self.voices_sent.take() {
+            self.backend.send(Command::Transcribe {
+                chat,
+                ids: Vec::new(),
+                locale: self.locale.tag().to_owned(),
+            });
+        }
+        self.voices_wanted = None;
+        *self
+            .voices_on_screen
+            .lock()
+            .unwrap_or_else(|p| p.into_inner()) = None;
+    }
+
     fn queue_transcriptions(&mut self, ctx: &egui::Context) {
-        let clear = |app: &mut App| {
-            if let Some((chat, _)) = app.voices_sent.take() {
-                app.backend.send(Command::Transcribe {
-                    chat,
-                    ids: Vec::new(),
-                    locale: app.locale.tag().to_owned(),
-                });
-            }
-            app.voices_wanted = None;
-        };
         if !crate::transcribe::available() || !self.settings.transcribe_voice_notes {
-            clear(self);
+            self.cancel_transcriptions();
             return;
         }
         let drawn = self
@@ -10181,7 +10181,7 @@ impl App {
             .unwrap_or_else(|p| p.into_inner())
             .clone();
         let Some((chat, ids)) = drawn else {
-            clear(self);
+            self.cancel_transcriptions();
             return;
         };
         // The click that changes chats is applied after the frame is drawn, so
