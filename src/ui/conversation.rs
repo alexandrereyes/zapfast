@@ -2248,8 +2248,6 @@ struct View<'a> {
     transcribing: &'a HashSet<(ChatId, String)>,
     /// Whether voice messages are transcribed as they come into view.
     transcribe_voices: bool,
-    /// Fills the ids of the voice messages on screen, in order, for the queue.
-    voices: Option<&'a crate::app::VoicesOnScreen>,
     copy_rows: Option<&'a std::sync::Mutex<Vec<crate::transcript::Row>>>,
 }
 
@@ -2533,13 +2531,16 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32) {
         video: &app.video,
         transcribing: &app.transcribing,
         transcribe_voices: app.settings.transcribe_voice_notes,
-        voices: Some(&app.voices_on_screen),
         // Whole-message exports are already formatted. Do not let the
         // text-selection annotator reinterpret them as drawn body text.
         copy_rows: (!app.selection.as_ref().is_some_and(|(id, _)| *id == chat.id))
             .then_some(app.copy_rows.as_ref()),
     };
     let mut actions = Vec::new();
+    // The voice messages drawn in the viewport this frame, in order. The
+    // action carries them to the app after the frame, which decides when to
+    // ask the backend for their transcripts.
+    let mut voices_on_screen = Vec::new();
     let mut anchored = false;
     // The first unread message is the count-th incoming one from the end.
     let divider = app
@@ -3190,14 +3191,8 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32) {
                             )
                             && before < viewport.bottom()
                             && before + measured > viewport.top()
-                            && let Some(slot) = view.voices
                         {
-                            let mut slot = slot.lock().unwrap_or_else(|p| p.into_inner());
-                            let entry =
-                                slot.get_or_insert_with(|| (view.chat.id.clone(), Vec::new()));
-                            if entry.0 == view.chat.id {
-                                entry.1.push(message.id.clone());
-                            }
+                            voices_on_screen.push(message.id.clone());
                         }
                         if before + height <= viewport.top() {
                             grew_above += measured - height;
@@ -3447,6 +3442,10 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32) {
             explicit,
         });
     }
+    actions.push(Action::VoicesOnScreen {
+        chat: chat.id.clone(),
+        ids: voices_on_screen,
+    });
     app.actions.extend(actions);
     if edge_scrolled_up {
         // Scrolling up releases stick-to-bottom.
@@ -5738,7 +5737,6 @@ pub(crate) fn list_menu(
         account_receipts_off: app.account_receipts_off,
         transcribing: &app.transcribing,
         transcribe_voices: false,
-        voices: None,
         copy_rows: Some(app.copy_rows.as_ref()),
         selecting: false,
         motion_playing: None,
@@ -10704,7 +10702,6 @@ mod tests {
             account_receipts_off: false,
             transcribing: &app.transcribing,
             transcribe_voices: false,
-            voices: None,
             copy_rows: Some(app.copy_rows.as_ref()),
             selecting: false,
             motion_playing: None,
